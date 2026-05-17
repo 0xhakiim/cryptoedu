@@ -1,0 +1,9 @@
+# CryptoEdu — Python dependencies
+# Install:  pip install -r requirements.txt
+
+customtkinter>=5.2.0   # Modern dark-mode tkinter widgets
+pycryptodome>=3.20.0   # AES, DES, RSA-PSS, DSA (TP2, TP3, TP5)
+cryptography>=42.0.0   # ECDH, ECDSA P-256 (TP3, TP5, TP6)
+
+# stdlib used (no install needed):
+#   hashlib, hmac, os, time, random, math, tkinter
