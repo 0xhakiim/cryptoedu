@@ -7,6 +7,7 @@ import random
 import hashlib
 import time
 import os
+import math
 
 try:
     from cryptography.hazmat.primitives.asymmetric import (
@@ -371,3 +372,49 @@ def run_ecies_simplified(msg: bytes):
         "ciphertext": ciphertext.hex()[:40],
         "plaintext": plaintext.decode(),
     }
+
+
+import math
+import random
+
+# ── ENGINE EXERCICE 6.4 : PAILLIER (HOMOMORPHISME ADDITIF) ────────────────────
+
+
+def paillier_keygen(bits: int = 64):
+    """Génère une paire de clés Paillier pédagogique performante."""
+    p = _gen_prime(bits)
+    q = _gen_prime(bits)
+    while p == q:
+        q = _gen_prime(bits)
+    n = p * q
+    nsq = n * n
+    g = n + 1
+    lam = (p - 1) * (q - 1)
+    mu = pow(lam, -1, n)
+    return {"n": n, "nsq": nsq, "g": g, "lambda": lam, "mu": mu}
+
+
+def paillier_encrypt(m: int, pub_key: dict) -> int:
+    """Chiffre un message m sous la forme : c = g^m * r^n mod n²."""
+    n = pub_key["n"]
+    nsq = pub_key["nsq"]
+    g = pub_key["g"]
+    r = random.randint(1, n - 1)
+    while math.gcd(r, n) != 1:
+        r = random.randint(1, n - 1)
+
+    term1 = pow(g, m, nsq)
+    term2 = pow(r, n, nsq)
+    return (term1 * term2) % nsq
+
+
+def paillier_decrypt(c: int, priv_key: dict, pub_key: dict) -> int:
+    """Déchiffre le produit homomorphe cumulé."""
+    n = pub_key["n"]
+    nsq = pub_key["nsq"]
+    lam = priv_key["lambda"]
+    mu = priv_key["mu"]
+
+    u = pow(c, lam, nsq)
+    l_func = (u - 1) // n
+    return (l_func * mu) % n

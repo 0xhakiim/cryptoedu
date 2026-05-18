@@ -1,209 +1,355 @@
 """
-pages/tp6_application.py — TP 6: E2E encrypted chat simulation.
-ECDH session key + AES-256-CBC per message + HMAC-SHA256 integrity.
+pages/tp6_application.py — Laboratoire applicatif avancé (TP 6).
+Fournit un environnement d'expérimentation réseau interactif pour les démonstrations.
 """
-import hashlib
-import hmac as _hmac
-import os
+
 import customtkinter as ctk
+import threading
+import time
+import random
+import hashlib
+import hmac as hmac_lib
+import socket
+import json
+import os
 
 from pages.base import Page
 from ui.theme import C, font
 from ui.widgets import (
-    make_tabview, info_label, labeled_entry,
-    write, action_btn, separator, chat_box, chat_append,
+    make_tabview,
+    info_label,
+    labeled_entry,
+    output_box,
+    write,
+    btn_row,
+    action_btn,
+    separator,
+)
+from algorithms.asymmetric import (
+    paillier_keygen,
+    paillier_encrypt,
+    paillier_decrypt,
+    CRYPTOGRAPHY_AVAILABLE,
 )
 
 try:
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.hazmat.primitives import serialization
-    CRYPTO_OK = True
-except ImportError:
-    CRYPTO_OK = False
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.primitives import padding
+    from cryptography.hazmat.backends import default_backend
 
-try:
-    from Crypto.Cipher import AES
-    from Crypto.Util.Padding import pad, unpad
-    from Crypto.Random import get_random_bytes
-    AES_OK = True
+    AES_AVAILABLE = True
 except ImportError:
-    AES_OK = False
+    AES_AVAILABLE = False
 
 
 class TP6Page(Page):
     def __init__(self, parent):
         super().__init__(
             parent,
-            title="TP 6 — Application Sécurisée",
-            subtitle="Chat E2E chiffré  ·  ECDH + AES-256-CBC + HMAC-SHA256",
+            title="TP 6 — Suite de Sécurisation Applicative Interactive",
+            subtitle="Laboratoire d'expérimentation pour démonstration réseau & cryptographique",
         )
-        tv = make_tabview(self, ["Chat E2E", "Protocole Expliqué"])
-        self._build_chat(tv.tab("Chat E2E"))
-        self._build_protocol(tv.tab("Protocole Expliqué"))
 
-    # ── Chat ───────────────────────────────────────────────────────────────────
-
-    def _build_chat(self, parent):
-        info_label(parent,
-            "ℹ️  Simulateur de messagerie E2E chiffrée.  "
-            "Session ECDH P-256 → clé AES-256.  "
-            "Chaque message: IV aléatoire + AES-256-CBC + HMAC-SHA256 (Encrypt-then-MAC).  "
-            "Le canal réseau ne voit que des bytes chiffrés.")
-
-        # Session setup
-        sf = ctk.CTkFrame(parent, fg_color="transparent")
-        sf.pack(fill="x", padx=14, pady=4)
-        ctk.CTkButton(
-            sf, text="🔑 Initialiser session ECDH",
-            command=self._init_session,
-            height=34, corner_radius=8,
-            font=font(12, "bold"),
-            fg_color=C["warn"], hover_color=C["warn"], text_color="black",
-        ).pack(side="left", padx=(0, 10))
-        self._status = ctk.CTkLabel(sf, text="⚪ Session non initialisée",
-                                    font=font(11), text_color=C["sub"])
-        self._status.pack(side="left")
-
-        self._chat_disp = chat_box(parent, 260)
-
-        # Message row
-        mf = ctk.CTkFrame(parent, fg_color="transparent")
-        mf.pack(fill="x", padx=14, pady=4)
-        self._inp = ctk.CTkEntry(mf, placeholder_text="Message...",
-                                 height=34, corner_radius=8, font=font(12))
-        self._inp.pack(side="left", fill="x", expand=True, padx=(0, 6))
-        for label, sender, color in [
-            ("Alice → Bob",  "Alice", C["accent"]),
-            ("Bob → Alice",  "Bob",   C["success"]),
-        ]:
-            ctk.CTkButton(
-                mf, text=label, command=lambda s=sender: self._send(s),
-                height=34, width=130, corner_radius=8,
-                font=font(12, "bold"),
-                fg_color=color, hover_color=color,
-            ).pack(side="left", padx=2)
-
-        action_btn(parent, "🗑️  Effacer le chat", self._clear_chat, C["border"])
-
-        self._session_key: bytes | None = None
-        self._msg_count = 0
-
-    def _init_session(self):
-        if CRYPTO_OK:
-            a = ec.generate_private_key(ec.SECP256R1())
-            b = ec.generate_private_key(ec.SECP256R1())
-            shared = a.exchange(ec.ECDH(), b.public_key())
-            self._session_key = hashlib.sha256(shared).digest()
-        else:
-            self._session_key = os.urandom(32)
-
-        self._status.configure(
-            text="🟢 Session E2E active  (ECDH P-256 + AES-256-CBC + HMAC-SHA256)",
-            text_color=C["success"],
+        tv = make_tabview(
+            self,
+            [
+                "🟢 6.1 Sockets TCP",
+                "🔵 6.2 Bluetooth (Sim)",
+                "📡 6.3 Chat Wi-Fi (UDP Réel)",
+                "🗳️ 6.4 Scrutin Homomorphe",
+            ],
         )
-        self._msg_count = 0
-        chat_append(self._chat_disp, "═" * 52)
-        chat_append(self._chat_disp, "🔑 Session ECDH P-256 établie")
-        chat_append(self._chat_disp,
-                    f"   Clé AES-256: {self._session_key.hex()[:32]}...")
-        chat_append(self._chat_disp, "   Mode: AES-256-CBC + HMAC-SHA256 (Encrypt-then-MAC)")
-        chat_append(self._chat_disp, "═" * 52)
 
-    def _send(self, sender: str):
-        if self._session_key is None:
-            chat_append(self._chat_disp, "⚠️  Initialisez la session d'abord!"); return
-        msg = self._inp.get().strip()
-        if not msg: return
-        self._inp.delete(0, "end")
-        self._msg_count += 1
+        self._build_ex61(tv.tab("🟢 6.1 Sockets TCP"))
+        self._build_ex62(tv.tab("🔵 6.2 Bluetooth (Sim)"))
+        self._build_ex63(tv.tab("📡 6.3 Chat Wi-Fi (UDP Réel)"))
+        self._build_ex64(tv.tab("🗳️ 6.4 Scrutin Homomorphe"))
 
+        # Clés symétriques partagées pour le chat
+        self.k_enc = b"0123456789abcdef0123456789abcdef"
+        self.k_mac = b"secret_mac_shared_key_established"
+
+    # ── EXERCICE 6.1 : Sockets TCP/IP Sécurisés ──────────
+    def _build_ex61(self, parent):
+        info_label(
+            parent,
+            "🕹️  TCP RÉEL : Ouvre un vrai socket serveur sur 127.0.0.1:8443 en arrière-plan.\n"
+            "Note: SSL n'est pas encapsulé ici pour éviter les crashs de certificats locaux manquants.",
+        )
+        self._ssl_msg = labeled_entry(
+            parent, "Charge utile", "GET /index.html HTTP/1.1"
+        )
+        btn_row(
+            parent,
+            ("1. Démarrer Serveur", self._start_real_tcp_server, C["accent"]),
+            ("2. Connecter & Envoyer", self._send_real_tcp_client, C["success"]),
+        )
+        self._out_61 = output_box(parent, 250)
+        self.tcp_server_ready = False
+
+    def _start_real_tcp_server(self):
+        if self.tcp_server_ready:
+            return
+
+        def server_loop():
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("127.0.0.1", 8443))
+                s.listen()
+                self.tcp_server_ready = True
+                write(
+                    self._out_61,
+                    "🟢 [SERVEUR] En écoute sur 127.0.0.1:8443 (Vrai Thread)...\n",
+                )
+                while True:
+                    conn, addr = s.accept()
+                    with conn:
+                        data = conn.recv(1024)
+                        write(
+                            self._out_61,
+                            f"📥 [SERVEUR] Reçu de {addr}: {data.decode()}\n",
+                        )
+
+        threading.Thread(target=server_loop, daemon=True).start()
+
+    def _send_real_tcp_client(self):
+        if not self.tcp_server_ready:
+            write(self._out_61, "❌ Démarrez d'abord le serveur.\n")
+            return
+        payload = self._ssl_msg.get()
         try:
-            m = msg.encode()
-            prefix = "🔵 Alice" if sender == "Alice" else "🟢 Bob"
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect(("127.0.0.1", 8443))
+                s.sendall(payload.encode())
+                write(self._out_61, f"📤 [CLIENT] Données envoyées au port 8443.\n")
+        except ConnectionRefusedError:
+            write(self._out_61, "❌ Connexion refusée.\n")
 
-            if AES_OK:
-                # Encrypt-then-MAC
-                iv = get_random_bytes(16)
-                ct = AES.new(self._session_key, AES.MODE_CBC, iv).encrypt(pad(m, 16))
-                mac = _hmac.new(self._session_key, iv + ct, hashlib.sha256).hexdigest()
+    # ── EXERCICE 6.2 : Sécurisation Bluetooth (Simulation) ─────────
+    def _build_ex62(self, parent):
+        info_label(
+            parent,
+            "🕹️  SIMULATEUR BLUETOOTH : Le matériel Bluetooth varie trop pour garantir une exécution PyBluez stable.\n"
+            "Ceci simule la négociation de la Link Key.",
+        )
+        self._bt_mac = labeled_entry(parent, "Adresse MAC", "B4:E6:2A:89:11:0C")
+        btn_row(
+            parent,
+            ("Appairer (Simulé)", self._bt_connect, C["success"]),
+        )
+        self._out_62 = output_box(parent, 200)
 
-                chat_append(self._chat_disp, f"\n{prefix}: \"{msg}\"")
-                chat_append(self._chat_disp,
-                            f"   ┌─ Sur le réseau (#{self._msg_count}):")
-                chat_append(self._chat_disp, f"   │  IV  : {iv.hex()}")
-                chat_append(self._chat_disp,
-                            f"   │  CT  : {ct.hex()[:40]}...")
-                chat_append(self._chat_disp,
-                            f"   └─ MAC : {mac[:32]}...")
+    def _bt_connect(self):
+        mac = self._bt_mac.get().strip()
+        link_key = hashlib.md5(f"{mac}-secret-link".encode()).hexdigest().upper()
+        write(self._out_62, f"🔗 [RFCOMM SSP] Comparaison numérique avec {mac}...\n")
+        write(
+            self._out_62,
+            f"🔑 [LINK KEY] Générée : E3:{link_key[:2]}:{link_key[2:4]}:...:{link_key[-2:]}\n\n",
+        )
 
-                # Decrypt on receiver side
-                ct_dec = AES.new(self._session_key, AES.MODE_CBC, iv).decrypt(ct)
-                pt = unpad(ct_dec, 16).decode()
-                recv = "🟢 Bob reçoit" if sender == "Alice" else "🔵 Alice reçoit"
-                chat_append(self._chat_disp, f"   {recv}: \"{pt}\" ✅")
+    # ── EXERCICE 6.3 : Chat UDP Réel & Bidirectionnel ──────────
+    def _build_ex63(self, parent):
+        info_label(
+            parent,
+            "🕹️  CHAT RÉEL : Alice et Bob tournent sur de vrais sockets UDP locaux (Ports 5001 et 5002).\n"
+            "Basculez entre les onglets pour voir le canal en clair et le trafic intercepté chiffré.",
+        )
+
+        # Sous-onglets pour la vue POV
+        self.chat_tv = make_tabview(
+            parent, ["👩 Alice (5001)", "🕵️ Canal (Réseau)", "👨 Bob (5002)"]
+        )
+
+        # --- UI ALICE ---
+        tab_alice = self.chat_tv.tab("👩 Alice (5001)")
+        self._alice_out = output_box(tab_alice, 200)
+        self._alice_entry = labeled_entry(
+            tab_alice, "Message pour Bob", "Salut Bob, clé reçue ?"
+        )
+        action_btn(
+            tab_alice,
+            "Envoyer à Bob",
+            lambda: self._send_udp("Alice", self._alice_entry, self._alice_out, 5002),
+            C["purple"],
+        )
+
+        # --- UI BOB ---
+        tab_bob = self.chat_tv.tab("👨 Bob (5002)")
+        self._bob_out = output_box(tab_bob, 200)
+        self._bob_entry = labeled_entry(
+            tab_bob, "Message pour Alice", "Oui, AES-256 actif !"
+        )
+        action_btn(
+            tab_bob,
+            "Envoyer à Alice",
+            lambda: self._send_udp("Bob", self._bob_entry, self._bob_out, 5001),
+            C["accent"],
+        )
+
+        # --- UI CANAL / SNIFFER ---
+        tab_net = self.chat_tv.tab("🕵️ Canal (Réseau)")
+        self._net_out = output_box(tab_net, 280)
+
+        # Setup Vrais Sockets
+        self.sock_alice = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock_alice.bind(("127.0.0.1", 5001))
+
+        self.sock_bob = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock_bob.bind(("127.0.0.1", 5002))
+
+        # Threads d'écoute persistants
+        threading.Thread(
+            target=self._listen_udp,
+            args=(self.sock_alice, "Alice", self._alice_out),
+            daemon=True,
+        ).start()
+        threading.Thread(
+            target=self._listen_udp,
+            args=(self.sock_bob, "Bob", self._bob_out),
+            daemon=True,
+        ).start()
+
+    def _pack_secure_payload(self, msg):
+        """Chiffre et signe le message (Encrypt-then-MAC)"""
+        iv_bytes = os.urandom(16)
+        iv_hex = iv_bytes.hex()
+
+        if AES_AVAILABLE:
+            padder = padding.PKCS7(128).padder()
+            padded_data = padder.update(msg.encode()) + padder.finalize()
+            cipher = Cipher(
+                algorithms.AES(self.k_enc),
+                modes.CBC(iv_bytes),
+                backend=default_backend(),
+            )
+            encryptor = cipher.encryptor()
+            ciphertext_hex = (
+                encryptor.update(padded_data) + encryptor.finalize()
+            ).hex()
+        else:
+            ciphertext_hex = hashlib.sha256(msg.encode() + iv_bytes).hexdigest()
+
+        data_to_sign = iv_hex.encode() + ciphertext_hex.encode()
+        mac = hmac_lib.new(self.k_mac, data_to_sign, hashlib.sha256).hexdigest()
+
+        return json.dumps(
+            {"iv": iv_hex, "ciphertext": ciphertext_hex, "mac": mac}
+        ).encode()
+
+    def _unpack_secure_payload(self, payload_bytes):
+        """Vérifie la signature et déchiffre (Encrypt-then-MAC)"""
+        try:
+            packet = json.loads(payload_bytes.decode())
+            iv_hex = packet["iv"]
+            ciphertext_hex = packet["ciphertext"]
+            received_mac = packet["mac"]
+
+            data_to_sign = iv_hex.encode() + ciphertext_hex.encode()
+            expected_mac = hmac_lib.new(
+                self.k_mac, data_to_sign, hashlib.sha256
+            ).hexdigest()
+
+            if not hmac_lib.compare_digest(expected_mac, received_mac):
+                return None, False  # HMAC Invalide
+
+            if AES_AVAILABLE:
+                cipher = Cipher(
+                    algorithms.AES(self.k_enc),
+                    modes.CBC(bytes.fromhex(iv_hex)),
+                    backend=default_backend(),
+                )
+                decryptor = cipher.decryptor()
+                padded_data = (
+                    decryptor.update(bytes.fromhex(ciphertext_hex))
+                    + decryptor.finalize()
+                )
+                unpadder = padding.PKCS7(128).unpadder()
+                msg = (unpadder.update(padded_data) + unpadder.finalize()).decode()
             else:
-                # XOR fallback (no pycryptodome)
-                ks = hashlib.sha256(self._session_key + self._msg_count.to_bytes(4, "big")).digest()
-                ct = bytes(a ^ b for a, b in zip(m, ks[:len(m)]))
-                chat_append(self._chat_disp, f"\n{prefix}: \"{msg}\"")
-                chat_append(self._chat_disp,
-                            f"   [Réseau: {ct.hex()[:40]}...]")
+                msg = "[Mode Dégradé] Empreinte validée, chiffrement non supporté sans 'cryptography'."
+
+            return msg, True
         except Exception as e:
-            chat_append(self._chat_disp, f"❌ Erreur: {e}")
+            return str(e), False
 
-    def _clear_chat(self):
-        self._chat_disp.configure(state="normal")
-        self._chat_disp.delete("1.0", "end")
-        self._chat_disp.configure(state="disabled")
+    def _send_udp(self, sender_name, entry_widget, out_widget, target_port):
+        msg = entry_widget.get()
+        if not msg:
+            return
 
-    # ── Protocol explanation ────────────────────────────────────────────────────
+        # Affichage POV expéditeur
+        write(out_widget, f"➡️ [Moi] {msg}\n")
+        entry_widget.delete(0, "end")
 
-    def _build_protocol(self, parent):
-        info_label(parent,
-            "ℹ️  Le protocole implémenté dans cet onglet Chat est un protocole "
-            "simplifié inspiré de Signal/TLS.  Voici chaque étape en détail.")
+        # Préparation et envoi sur le vrai socket
+        payload_bytes = self._pack_secure_payload(msg)
+        sock = self.sock_alice if sender_name == "Alice" else self.sock_bob
+        sock.sendto(payload_bytes, ("127.0.0.1", target_port))
 
-        steps = [
-            ("1. ECDH Key Exchange", C["accent"],
-             "Alice génère (a_priv, A=a·G) sur P-256.\n"
-             "Bob génère   (b_priv, B=b·G) sur P-256.\n"
-             "Alice calcule secret = a·B = a·b·G.\n"
-             "Bob calcule   secret = b·A = a·b·G.\n"
-             "→ Même secret partagé, sans jamais l'envoyer sur le réseau.\n"
-             "→ Perfect Forward Secrecy: clés éphémères à chaque session."),
+        # Sniffing sur le canal
+        packet = json.loads(payload_bytes.decode())
+        write(
+            self._net_out, f"📦 [WIFI CAPTURE] {sender_name} -> Port {target_port} :\n"
+        )
+        write(self._net_out, f"   ┣ IV  : {packet['iv'][:16]}...\n")
+        write(self._net_out, f"   ┣ AES : {packet['ciphertext'][:32]}...\n")
+        write(self._net_out, f"   ┗ MAC : {packet['mac']}\n\n")
 
-            ("2. Key Derivation", C["purple"],
-             "session_key = SHA-256(ecdh_secret)\n"
-             "→ 32 octets aléatoires servant de clé AES-256.\n"
-             "En production: HKDF(secret, salt, info) pour plusieurs sous-clés\n"
-             "(clé de chiffrement + clé MAC séparées)."),
+    def _listen_udp(self, sock, receiver_name, out_widget):
+        while True:
+            try:
+                data, addr = sock.recvfrom(4096)
+                msg, is_valid = self._unpack_secure_payload(data)
 
-            ("3. Encrypt-then-MAC par message", C["success"],
-             "Pour chaque message M:\n"
-             "  iv  = random_bytes(16)            # IV unique!\n"
-             "  ct  = AES-256-CBC(session_key, iv, pad(M))\n"
-             "  mac = HMAC-SHA256(session_key, iv ∥ ct)\n"
-             "  → Envoi: (iv, ct, mac)\n\n"
-             "Réception:\n"
-             "  Vérifier mac AVANT de déchiffrer (Encrypt-then-MAC)\n"
-             "  → protège contre les attaques par oracle de padding."),
+                if is_valid:
+                    sender = "Alice" if receiver_name == "Bob" else "Bob"
+                    write(out_widget, f"✅ [{sender}] {msg}\n")
+                else:
+                    write(
+                        out_widget,
+                        f"❌ [ALERTE] Paquet corrompu ou falsifié ignoré depuis {addr}.\n",
+                    )
+            except Exception:
+                pass
 
-            ("4. Garanties de sécurité", C["warn"],
-             "✅  Confidentialité   : AES-256-CBC (indistinguable du bruit)\n"
-             "✅  Intégrité         : HMAC-SHA256 (détecte toute modification)\n"
-             "✅  Authenticité      : seul le détenteur de la clé peut générer un MAC valide\n"
-             "✅  PFS               : clés ECDH éphémères — compromission future ≠ déchiffrement passé\n"
-             "⚠️  Absent ici        : rotation de clés (Double Ratchet de Signal),\n"
-             "                      authentification de l'identité (certificats)."),
-        ]
+    # ── EXERCICE 6.4 : Scrutin Électronique Homomorphe ─────────────
+    def _build_ex64(self, parent):
+        info_label(parent, "🕹️  SCRUTIN HOMOMORPHE : Agrégation aveugle.")
+        self._vote_count = labeled_entry(parent, "Nombre d'électeurs", "150")
+        action_btn(
+            parent, "🗳️ Démarrer Scrutin", self._run_paillier, C["warn"], "black"
+        )
+        self._out_64 = output_box(parent, 250)
 
-        for title, color, body in steps:
-            f = ctk.CTkFrame(parent, fg_color=C["sidebar"], corner_radius=10,
-                             border_width=1, border_color=color)
-            f.pack(fill="x", padx=14, pady=5)
-            ctk.CTkLabel(f, text=title, font=font(13, "bold"),
-                         text_color=color).pack(anchor="w", padx=12, pady=(10, 2))
-            ctk.CTkFrame(f, height=1, fg_color=color).pack(fill="x", padx=12, pady=(0, 6))
-            ctk.CTkLabel(f, text=body, font=font(11), text_color=C["text"],
-                         justify="left", wraplength=590).pack(
-                anchor="w", padx=12, pady=(0, 10))
+    def _run_paillier(self):
+        # Code Paillier identique à l'itération précédente (fonctionnel mathématiquement)
+        try:
+            total = int(self._vote_count.get())
+            if total <= 0:
+                raise ValueError
+        except ValueError:
+            write(self._out_64, "❌ Entier valide requis.\n")
+            return
+
+        keys = paillier_keygen(bits=64)
+        voix_oui = 0
+        bulletins = []
+        for i in range(total):
+            choix = random.choice([0, 1])
+            voix_oui += choix
+            bulletins.append(paillier_encrypt(choix, keys))
+
+        produit = 1
+        for c in bulletins:
+            produit = (produit * c) % keys["nsq"]
+
+        total_recupere = paillier_decrypt(produit, keys, keys)
+        write(self._out_64, f"🗳️ Votes générés : {total}\n")
+        write(
+            self._out_64,
+            f"🧮 Agrégation chiffrée (C1 * C2 mod n²) : {str(produit)[:30]}...\n",
+        )
+        write(
+            self._out_64,
+            f"🔓 Déchiffrement : {total_recupere} OUI (Attendu: {voix_oui})\n\n",
+        )
