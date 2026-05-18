@@ -25,8 +25,6 @@ from algorithms.signatures import (
     ElGamalSignature,
 )
 
-from algorithms.ecdsa_lab import EducationalECDSA
-
 
 class TP5Page(Page):
 
