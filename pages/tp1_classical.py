@@ -1,8 +1,3 @@
-"""
-pages/tp1_classical.py — TP 1: César and Vigenère ciphers.
-Demonstrates encryption, decryption, brute-force, and Kasiski test.
-"""
-
 import tkinter as tk
 import customtkinter as ctk
 
@@ -27,6 +22,11 @@ from algorithms.classical import (
     vigenere_decrypt,
     kasiski_test,
     probable_key_length,
+    # New imports
+    hill_encrypt,
+    hill_decrypt,
+    otp_encrypt,
+    otp_decrypt,
 )
 
 
@@ -35,11 +35,14 @@ class TP1Page(Page):
         super().__init__(
             parent,
             title="TP 1 — Chiffrement Classique",
-            subtitle="César  ·  Vigenère",
+            subtitle="César  ·  Vigenère  ·  Hill  ·  OTP",
         )
-        tv = make_tabview(self, ["César", "Vigenère"])
+        # Added Hill and OTP to the tabs list
+        tv = make_tabview(self, ["César", "Vigenère", "Hill", "One-Time Pad"])
         self._build_cesar(tv.tab("César"))
         self._build_vigenere(tv.tab("Vigenère"))
+        self._build_hill(tv.tab("Hill"))
+        self._build_otp(tv.tab("One-Time Pad"))
 
     # ── César ──────────────────────────────────────────────────────────────────
 
@@ -208,3 +211,110 @@ class TP1Page(Page):
         lines.append(f"\nGCD des distances = {key_len}")
         lines.append(f"→ Longueur de clé probable : {key_len}")
         write(self._v_kasiski_out, "\n".join(lines))
+
+    # ── Hill (2x2) ─────────────────────────────────────────────────────────────
+
+    def _build_hill(self, parent):
+        info_label(
+            parent,
+            "ℹ️  Chiffrement par blocs linéaires (substitution polygraphique). "
+            "Un bloc de n lettres est multiplié par une matrice n×n inversible mod 26. "
+            "Ici implanté avec une matrice 2×2. Si le message est impair, un 'X' est ajouté.",
+        )
+
+        self._h_msg = labeled_entry(parent, "Message", "CODE")
+
+        # Grid layout for 2x2 Matrix entries
+        ctk.CTkLabel(
+            parent, text="Matrice Key K (2x2)", font=font(12), text_color=C["sub"]
+        ).pack(anchor="w", padx=14, pady=(6, 2))
+
+        grid_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        grid_frame.pack(anchor="w", padx=14, pady=(0, 10))
+
+        # Matrix inputs: defaults to [[9, 4], [5, 7]] (invertible mod 26, det=43 = 17 mod 26)
+        self._h_m11 = ctk.CTkEntry(grid_frame, width=50, justify="center")
+        self._h_m11.insert(0, "9")
+        self._h_m11.grid(row=0, column=0, padx=4, pady=4)
+
+        self._h_m12 = ctk.CTkEntry(grid_frame, width=50, justify="center")
+        self._h_m12.insert(0, "4")
+        self._h_m12.grid(row=0, column=1, padx=4, pady=4)
+
+        self._h_m21 = ctk.CTkEntry(grid_frame, width=50, justify="center")
+        self._h_m21.insert(0, "5")
+        self._h_m21.grid(row=1, column=0, padx=4, pady=4)
+
+        self._h_m22 = ctk.CTkEntry(grid_frame, width=50, justify="center")
+        self._h_m22.insert(0, "7")
+        self._h_m22.grid(row=1, column=1, padx=4, pady=4)
+
+        btn_row(
+            parent,
+            ("🔒 Chiffrer", self._h_enc, C["accent"]),
+            ("🔓 Déchiffrer", self._h_dec, C["success"]),
+        )
+
+        ctk.CTkLabel(parent, text="Résultat", font=font(12), text_color=C["sub"]).pack(
+            anchor="w", padx=14
+        )
+        self._h_out = output_box(parent, 52)
+
+    def _get_hill_matrix(self):
+        try:
+            return [
+                [int(self._h_m11.get()), int(self._h_m12.get())],
+                [int(self._h_m21.get()), int(self._h_m22.get())],
+            ]
+        except ValueError:
+            raise ValueError("Tous les champs de la matrice doivent être des entiers.")
+
+    def _h_enc(self):
+        try:
+            matrix = self._get_hill_matrix()
+            write(self._h_out, hill_encrypt(self._h_msg.get(), matrix))
+        except Exception as e:
+            write(self._h_out, f"Erreur: {e}")
+
+    def _h_dec(self):
+        try:
+            matrix = self._get_hill_matrix()
+            write(self._h_out, hill_decrypt(self._h_msg.get(), matrix))
+        except Exception as e:
+            write(self._h_out, f"Erreur: {e}")
+
+    # ── One-Time Pad (OTP) ─────────────────────────────────────────────────────
+
+    def _build_otp(self, parent):
+        info_label(
+            parent,
+            "ℹ️  Le masque jetable offre une sécurité théorique parfaite (Shannon) "
+            "si et seulement si la clé est aussi longue que le message, purement aléatoire, "
+            "et utilisée une unique fois. Le chiffrement est effectué ici par addition mod 26.",
+        )
+
+        self._o_msg = labeled_entry(parent, "Message", "SECRET")
+        self._o_key = labeled_entry(parent, "Clé Secrète (Même longueur)", "XMCKLN")
+
+        btn_row(
+            parent,
+            ("🔒 Chiffrer", self._o_enc, C["accent"]),
+            ("🔓 Déchiffrer", self._o_dec, C["success"]),
+        )
+
+        ctk.CTkLabel(parent, text="Résultat", font=font(12), text_color=C["sub"]).pack(
+            anchor="w", padx=14
+        )
+        self._o_out = output_box(parent, 52)
+
+    def _o_enc(self):
+        try:
+            write(self._o_out, otp_encrypt(self._o_msg.get(), self._o_key.get()))
+        except Exception as e:
+            write(self._o_out, f"Erreur: {e}")
+
+    def _o_dec(self):
+        try:
+            write(self._o_out, otp_decrypt(self._o_msg.get(), self._o_key.get()))
+        except Exception as e:
+            write(self._o_out, f"Erreur: {e}")

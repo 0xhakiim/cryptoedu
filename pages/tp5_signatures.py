@@ -1,212 +1,620 @@
 """
-pages/tp5_signatures.py — TP 5: ECDSA on P-256.
-Sign, verify, tamper detection, and non-repudiation demo.
+pages/tp5_signatures.py
 """
+
 import customtkinter as ctk
 
 from pages.base import Page
 from ui.theme import C, font
 from ui.widgets import (
-    make_tabview, info_label, labeled_entry, output_box,
-    write, btn_row, action_btn, separator,
+    make_tabview,
+    info_label,
+    labeled_entry,
+    output_box,
+    write,
+    btn_row,
+    action_btn,
+    separator,
+    key_size_selector,
+    mode_selector,
+)
+from algorithms.signatures import (
+    EducationalECDSA,
+    RSAPSSDemo,
+    DSADemo,
+    ElGamalSignature,
 )
 
-try:
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.hazmat.primitives import hashes, serialization
-    ECDSA_AVAILABLE = True
-except ImportError:
-    ECDSA_AVAILABLE = False
+from algorithms.ecdsa_lab import EducationalECDSA
 
 
 class TP5Page(Page):
+
     def __init__(self, parent):
+
         super().__init__(
             parent,
-            title="TP 5 — Signatures Numériques",
-            subtitle="ECDSA P-256  ·  Authenticité · Intégrité · Non-répudiation",
+            title="TP5 Interactive Signature Lab",
+            subtitle="ECDSA / RSA-PSS / DSA / ElGamal",
         )
-        tv = make_tabview(self, ["ECDSA", "Non-répudiation"])
-        self._build_ecdsa(tv.tab("ECDSA"))
-        self._build_nonrep(tv.tab("Non-répudiation"))
 
-    # ── ECDSA ──────────────────────────────────────────────────────────────────
+        tv = make_tabview(
+            self,
+            [
+                "ECDSA Lab",
+                "RSA-PSS Lab",
+                "DSA Lab",
+                "ElGamal Lab",
+            ],
+        )
 
-    def _build_ecdsa(self, parent):
-        if not ECDSA_AVAILABLE:
-            info_label(parent, "⚠️  cryptography requis: pip install cryptography", C["danger"])
+        self.ecdsa = EducationalECDSA()
+        self.rsa = RSAPSSDemo()
+        self.dsa = DSADemo()
+        self.elgamal = ElGamalSignature()
+
+        self._build_ecdsa_lab(tv.tab("ECDSA Lab"))
+        self._build_rsa_lab(tv.tab("RSA-PSS Lab"))
+        self._build_dsa_lab(tv.tab("DSA Lab"))
+        self._build_elgamal_lab(tv.tab("ElGamal Lab"))
+
+    # -----------------------------------------------------
+    # UI
+    # -----------------------------------------------------
+
+    def _build_ecdsa_lab(self, parent):
+
+        info_label(
+            self,
+            "Interactive ECDSA laboratory. Modify parameters and observe computations.",
+        )
+
+        self.msg = labeled_entry(self, "Message", "Transfer 5 BTC")
+
+        self.priv = labeled_entry(self, "Private key d (optional)", "")
+
+        self.nonce = labeled_entry(self, "Nonce k (optional)", "")
+
+        btn_row(
+            self,
+            ("Generate Keys", self.keygen, C["warn"], "black"),
+            ("Hash", self.hash_message, C["accent"]),
+            ("Sign", self.sign, C["success"]),
+            ("Verify", self.verify, C["success"]),
+            ("Tamper", self.tamper, C["danger"]),
+        )
+
+        self.out = output_box(self, 500)
+
+        self.signature = None
+
+    # -----------------------------------------------------
+    # ACTIONS
+    # -----------------------------------------------------
+
+    def keygen(self):
+
+        d = self.priv.get().strip()
+
+        if d:
+            result = self.ecdsa.generate_keys(int(d))
+        else:
+            result = self.ecdsa.generate_keys()
+
+        write(
+            self.out,
+            f"""
+=== KEY GENERATION ===
+
+Private key d:
+{result['private_key']}
+
+Public key Q = dG:
+
+Qx:
+{result['public_key'][0]}
+
+Qy:
+{result['public_key'][1]}
+""",
+        )
+
+    def hash_message(self):
+
+        result = self.ecdsa.hash_message(self.msg.get())
+
+        write(
+            self.out,
+            f"""
+=== HASHING ===
+
+Message:
+{result['message']}
+
+SHA-256:
+{result['hash_hex']}
+
+Integer representation:
+{result['hash_int']}
+""",
+        )
+
+    def sign(self):
+
+        k = self.nonce.get().strip()
+
+        if k:
+            result = self.ecdsa.sign(self.msg.get(), int(k))
+        else:
+            result = self.ecdsa.sign(self.msg.get())
+
+        self.signature = result["signature"]
+
+        write(
+            self.out,
+            f"""
+=== SIGNATURE GENERATION ===
+
+Hash H(m):
+{result['hash']}
+
+Nonce k:
+{result['nonce_k']}
+
+k inverse:
+{result['k_inverse']}
+
+R = kG:
+
+Rx:
+{result['R_point'][0]}
+
+Ry:
+{result['R_point'][1]}
+
+r = Rx mod n:
+{result['r']}
+
+s = k⁻¹(H(m)+dr) mod n:
+{result['s']}
+
+Final signature:
+(r,s)
+
+({result['r']},
+ {result['s']})
+""",
+        )
+
+    def verify(self):
+
+        if self.signature is None:
+            write(self.out, "Generate signature first")
             return
 
-        info_label(parent,
-            "ℹ️  ECDSA P-256: signer = Sign(clé_privée, SHA-256(M)) → (r, s).  "
-            "Vérifier = Verify(clé_publique, M, (r,s)) → ✓/✗.  "
-            "Sécurité: ECDLP sur P-256 (128-bit security level).  "
-            "Utilisé dans: Bitcoin, TLS 1.3 certificates, JWT ES256, "
-            "FIDO2/WebAuthn, passeport électronique (ICAO).")
+        result = self.ecdsa.verify(self.msg.get(), self.signature)
 
-        self._msg = labeled_entry(parent,
-            "Message à signer",
-            "Blockchain transaction: 1 BTC → Alice — bloc #880000")
+        write(
+            self.out,
+            f"""
+=== VERIFICATION ===
 
-        btn_row(parent,
-            ("🔑 Générer paire ECDSA P-256", self._keygen, C["warn"],    "black"),
-            ("✍️  Signer",                   self._sign,   C["accent"]),
-            ("✅ Vérifier",                  self._verify, C["success"]),
-            ("❌ Tamper + Vérifier",         self._tamper, C["danger"]),
+s inverse:
+{result['s_inverse']}
+
+u1:
+{result['u1']}
+
+u2:
+{result['u2']}
+
+Computed point P:
+
+Px:
+{result['computed_point'][0]}
+
+Py:
+{result['computed_point'][1]}
+
+Computed r:
+{result['computed_r']}
+
+Expected r:
+{result['expected_r']}
+
+VALID:
+{result['valid']}
+""",
         )
-        ctk.CTkLabel(parent, text="Résultat", font=font(12),
-                     text_color=C["sub"]).pack(anchor="w", padx=14)
-        self._out = output_box(parent, 280)
 
-        self._key: object = None
-        self._sig: bytes  = None
-        self._signed_msg: bytes = None
+    def tamper(self):
 
-        separator(parent)
-        info_label(parent,
-            "⚠️  Comme DSA, ECDSA exige un nonce k UNIQUE et SECRET par signature.  "
-            "Réutiliser k permet de retrouver la clé privée: x = (s·k - H(M)) · r⁻¹ mod q.  "
-            "Cas réel: Sony PS3 (2010) signait avec k = constante → clé privée extraite.",
-            color=C["warn"])
+        if self.signature is None:
+            write(self.out, "Generate signature first")
+            return
 
-    def _keygen(self):
-        if not ECDSA_AVAILABLE: return
-        try:
-            self._key = ec.generate_private_key(ec.SECP256R1())
-            self._sig = None; self._signed_msg = None
-            pub = self._key.public_key()
-            pb = pub.public_bytes(
-                serialization.Encoding.X962,
-                serialization.PublicFormat.UncompressedPoint,
-            )
-            write(self._out,
-                f"✅  Paire ECDSA P-256 générée!\n\n"
-                f"Clé publique ({len(pb)} octets):\n{pb.hex()}\n\n"
-                f"💡  Taille comparée:\n"
-                f"   ECDSA P-256 pub : {len(pb)} octets\n"
-                f"   RSA-2048   pub  : ~256 octets  (4× plus grand)\n"
-                f"   RSA-3072   pub  : ~384 octets  (≈ même sécurité)\n\n"
-                f"Courbe: SECP256R1, ordre q ≈ 2²⁵⁶\n"
-                f"Sécurité: 128-bit (symétrique AES-128 équivalent)")
-        except Exception as e:
-            write(self._out, f"Erreur: {e}")
+        tampered = self.msg.get() + " hacked"
 
-    def _sign(self):
-        if self._key is None:
-            write(self._out, "Générez d'abord une paire de clés!"); return
-        try:
-            m = self._msg.get().encode()
-            self._signed_msg = m
-            self._sig = self._key.sign(m, ec.ECDSA(hashes.SHA256()))
-            write(self._out,
-                f"Message  : {self._msg.get()}\n"
-                f"Hash     : SHA-256 (intégré dans ECDSA)\n\n"
-                f"Signature ECDSA ({len(self._sig)} octets, encodage DER):\n"
-                f"{self._sig.hex()}\n\n"
-                f"✅  Document signé avec la clé privée!\n"
-                f"   (r, s) encodés en DER — chaque valeur ≈ 32 octets")
-        except Exception as e:
-            write(self._out, f"Erreur: {e}")
+        result = self.ecdsa.verify(tampered, self.signature)
 
-    def _verify(self):
-        if self._sig is None:
-            write(self._out, "Signez d'abord!"); return
-        try:
-            self._key.public_key().verify(self._sig, self._signed_msg,
-                                          ec.ECDSA(hashes.SHA256()))
-            write(self._out,
-                f"Message : {self._signed_msg.decode()}\n\n"
-                f"✅  SIGNATURE ECDSA VALIDE\n"
-                f"   Authenticité  : message vient bien du propriétaire de la clé privée\n"
-                f"   Intégrité     : message non modifié depuis la signature\n"
-                f"   Non-répudiation: le signataire ne peut pas nier avoir signé")
-        except Exception as e:
-            write(self._out, f"❌  SIGNATURE INVALIDE\n    {e}")
+        write(
+            self.out,
+            f"""
+=== TAMPERING TEST ===
 
-    def _tamper(self):
-        if self._sig is None:
-            write(self._out, "Signez d'abord!"); return
-        try:
-            tampered = self._signed_msg + b" [FALSIFIE]"
-            self._key.public_key().verify(self._sig, tampered,
-                                          ec.ECDSA(hashes.SHA256()))
-            write(self._out, "VALIDE (anomalie inattendue!)")
-        except Exception as e:
-            write(self._out,
-                f"Message original  : {self._signed_msg.decode()}\n"
-                f"Message tamperisé : {self._signed_msg.decode()} [FALSIFIE]\n\n"
-                f"❌  FALSIFICATION DÉTECTÉE PAR ECDSA!\n\n"
-                f"    {e}\n\n"
-                f"💡  La signature (r,s) lie cryptographiquement le hash\n"
-                f"    SHA-256(M) à la clé privée.  Modifier M d'un seul\n"
-                f"    bit change complètement SHA-256(M) → signature invalide.")
+Original message:
+{self.msg.get()}
 
-    # ── Non-repudiation demo ───────────────────────────────────────────────────
+Tampered message:
+{tampered}
 
-    def _build_nonrep(self, parent):
-        info_label(parent,
-            "ℹ️  Non-répudiation: le signataire ne peut pas nier avoir signé car "
-            "seul le propriétaire de la clé privée peut produire une signature valide.  "
-            "Contrairement à HMAC (clé symétrique partagée), une signature numérique "
-            "est vérifiable par n'importe qui possédant la clé publique.")
+Verification result:
+{result['valid']}
 
-        info_label(parent,
-            "Scénario: Alice signe un contrat. Bob vérifie avec la clé publique d'Alice.\n"
-            "Alice ne peut pas prétendre ne pas avoir signé.",
-            color=C["accent"])
-
-        self._nr_contract = labeled_entry(parent,
-            "Contrat (Alice signe)",
-            "Je soussignée Alice, m'engage à livrer 100 unités — 17/05/2026")
-
-        btn_row(parent,
-            ("🔑 Clé privée Alice", self._nr_keygen, C["warn"],    "black"),
-            ("✍️  Alice signe",     self._nr_sign,   C["accent"]),
-            ("🔍 Bob vérifie",      self._nr_verify,  C["success"]),
+Signature invalid because hash changed.
+""",
         )
-        ctk.CTkLabel(parent, text="Trace du protocole", font=font(12),
-                     text_color=C["sub"]).pack(anchor="w", padx=14)
-        self._nr_out = output_box(parent, 260)
-        self._nr_key = None; self._nr_sig = None; self._nr_msg = None
 
-    def _nr_keygen(self):
-        if not ECDSA_AVAILABLE:
-            write(self._nr_out, "cryptography requis!"); return
-        self._nr_key = ec.generate_private_key(ec.SECP256R1())
-        pub = self._nr_key.public_key().public_bytes(
-            serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
-        write(self._nr_out,
-            "🔑 Infrastructure à clés publiques:\n\n"
-            f"Alice conserve sa clé PRIVÉE (secrète)\n"
-            f"Alice publie sa clé PUBLIQUE:\n  {pub.hex()[:60]}...\n\n"
-            "Bob (et le tribunal!) peuvent utiliser cette clé publique\n"
-            "pour vérifier toute signature d'Alice.")
+    # -----------------------------------------------------
+    # ELGAMAL LAB
+    # -----------------------------------------------------
 
-    def _nr_sign(self):
-        if self._nr_key is None:
-            write(self._nr_out, "Générez d'abord les clés!"); return
-        m = self._nr_contract.get().encode()
-        self._nr_msg = m
-        self._nr_sig = self._nr_key.sign(m, ec.ECDSA(hashes.SHA256()))
-        write(self._nr_out,
-            f"✍️  Alice signe le contrat:\n«{m.decode()}»\n\n"
-            f"Signature ({len(self._nr_sig)} octets):\n{self._nr_sig.hex()[:72]}...\n\n"
-            "Alice envoie (contrat + signature) à Bob.\n"
-            "Sa clé privée ne quitte jamais son appareil.")
+    def _build_elgamal_lab(self, parent):
 
-    def _nr_verify(self):
-        if self._nr_sig is None:
-            write(self._nr_out, "Alice doit d'abord signer!"); return
-        try:
-            self._nr_key.public_key().verify(self._nr_sig, self._nr_msg,
-                                             ec.ECDSA(hashes.SHA256()))
-            write(self._nr_out,
-                f"🔍 Bob vérifie avec la CLÉ PUBLIQUE d'Alice:\n\n"
-                f"Contrat : {self._nr_msg.decode()}\n\n"
-                f"✅  SIGNATURE VALIDE — Bob peut prouver devant un tribunal que:\n"
-                f"   1. Alice a bien signé ce contrat exact\n"
-                f"   2. Le contrat n'a pas été modifié depuis\n"
-                f"   3. Alice ne peut pas nier (non-répudiation)\n\n"
-                f"💡  Seule Alice possède la clé privée correspondante.")
-        except Exception as e:
-            write(self._nr_out, f"❌  Vérification échouée: {e}")
+        info_label(parent, "Interactive ElGamal signature laboratory")
+
+        self.elg_msg = labeled_entry(parent, "Message", "Hello ElGamal")
+
+        btn_row(
+            parent,
+            ("Show Parameters", self.elgamal_params, C["warn"], "black"),
+            ("Sign", self.elgamal_sign, C["accent"]),
+            ("Verify", self.elgamal_verify, C["success"]),
+            ("Tamper", self.elgamal_tamper, C["danger"]),
+        )
+
+        self.elg_out = output_box(parent, 500)
+
+        self.elg_sig = None
+
+    def elgamal_params(self):
+
+        write(
+            self.elg_out,
+            f"""
+=== ELGAMAL PARAMETERS ===
+
+Prime p:
+{self.elgamal.p}
+
+Generator g:
+{self.elgamal.g}
+
+Private key x:
+{self.elgamal.x}
+
+Public key y = g^x mod p:
+{self.elgamal.y}
+""",
+        )
+
+    def elgamal_sign(self):
+
+        msg = self.elg_msg.get().encode()
+
+        self.elg_sig = self.elgamal.sign(msg)
+
+        write(
+            self.elg_out,
+            f"""
+=== ELGAMAL SIGNATURE ===
+
+Message:
+{msg.decode()}
+
+r:
+{self.elg_sig[0]}
+
+s:
+{self.elg_sig[1]}
+
+Signature:
+{self.elg_sig}
+""",
+        )
+
+    def elgamal_verify(self):
+
+        if self.elg_sig is None:
+            write(self.elg_out, "Sign first")
+            return
+
+        valid = self.elgamal.verify(self.elg_msg.get().encode(), self.elg_sig)
+
+        write(
+            self.elg_out,
+            f"""
+=== ELGAMAL VERIFICATION ===
+
+Check:
+
+g^H(m) ?= y^r * r^s mod p
+
+Verification result:
+{valid}
+""",
+        )
+
+    def elgamal_tamper(self):
+
+        if self.elg_sig is None:
+            write(self.elg_out, "Sign first")
+            return
+
+        tampered = self.elg_msg.get().encode() + b" hacked"
+
+        valid = self.elgamal.verify(tampered, self.elg_sig)
+
+        write(
+            self.elg_out,
+            f"""
+=== ELGAMAL TAMPERING ===
+
+Tampered message:
+{tampered.decode()}
+
+Verification:
+{valid}
+""",
+        )
+
+    # -----------------------------------------------------
+    # RSA-PSS LAB
+    # -----------------------------------------------------
+
+    def _build_rsa_lab(self, parent):
+
+        info_label(parent, "Interactive RSA-PSS signature laboratory")
+
+        self.rsa_msg = labeled_entry(parent, "Message", "Hello RSA-PSS")
+
+        btn_row(
+            parent,
+            ("Generate Keys", self.rsa_keygen, C["warn"], "black"),
+            ("Sign", self.rsa_sign, C["accent"]),
+            ("Verify", self.rsa_verify, C["success"]),
+            ("Tamper", self.rsa_tamper, C["danger"]),
+        )
+
+        self.rsa_out = output_box(parent, 500)
+
+        self.rsa_key = None
+        self.rsa_sig = None
+
+    def rsa_keygen(self):
+
+        self.rsa_key = self.rsa.keygen()
+
+        numbers = self.rsa_key.private_numbers()
+
+        write(
+            self.rsa_out,
+            f"""
+=== RSA-PSS KEY GENERATION ===
+
+Modulus n:
+{numbers.public_numbers.n}
+
+Public exponent e:
+{numbers.public_numbers.e}
+
+Private exponent d:
+{numbers.d}
+
+Prime p:
+{numbers.p}
+
+Prime q:
+{numbers.q}
+""",
+        )
+
+    def rsa_sign(self):
+
+        if self.rsa_key is None:
+            write(self.rsa_out, "Generate keys first")
+            return
+
+        msg = self.rsa_msg.get().encode()
+
+        self.rsa_sig = self.rsa.sign(self.rsa_key, msg)
+
+        write(
+            self.rsa_out,
+            f"""
+=== RSA-PSS SIGNATURE ===
+
+Message:
+{msg.decode()}
+
+SHA-256 hash used
+
+PSS padding applied
+
+Signature bytes:
+{self.rsa_sig.hex()}
+
+Signature size:
+{len(self.rsa_sig)} bytes
+""",
+        )
+
+    def rsa_verify(self):
+
+        if self.rsa_sig is None:
+            write(self.rsa_out, "Sign first")
+            return
+
+        valid = self.rsa.verify(
+            self.rsa_key.public_key(), self.rsa_sig, self.rsa_msg.get().encode()
+        )
+
+        write(
+            self.rsa_out,
+            f"""
+=== RSA-PSS VERIFICATION ===
+
+Recovered using:
+
+sig^e mod n
+
+Verification result:
+{valid}
+""",
+        )
+
+    def rsa_tamper(self):
+
+        if self.rsa_sig is None:
+            write(self.rsa_out, "Sign first")
+            return
+
+        tampered = self.rsa_msg.get() + " hacked"
+
+        valid = self.rsa.verify(
+            self.rsa_key.public_key(), self.rsa_sig, tampered.encode()
+        )
+
+        write(
+            self.rsa_out,
+            f"""
+=== RSA-PSS TAMPERING ===
+
+Tampered message:
+{tampered}
+
+Verification:
+{valid}
+""",
+        )
+        # -----------------------------------------------------
+
+    # DSA LAB
+    # -----------------------------------------------------
+
+    def _build_dsa_lab(self, parent):
+
+        info_label(parent, "Interactive DSA laboratory")
+
+        self.dsa_msg = labeled_entry(parent, "Message", "Hello DSA")
+
+        btn_row(
+            parent,
+            ("Generate Keys", self.dsa_keygen, C["warn"], "black"),
+            ("Sign", self.dsa_sign, C["accent"]),
+            ("Verify", self.dsa_verify, C["success"]),
+            ("Tamper", self.dsa_tamper, C["danger"]),
+        )
+
+        self.dsa_out = output_box(parent, 500)
+
+        self.dsa_key = None
+        self.dsa_sig = None
+
+    def dsa_keygen(self):
+
+        self.dsa_key = self.dsa.keygen()
+
+        numbers = self.dsa_key.private_numbers()
+
+        write(
+            self.dsa_out,
+            f"""
+=== DSA PARAMETERS ===
+
+p:
+{numbers.public_numbers.parameter_numbers.p}
+
+q:
+{numbers.public_numbers.parameter_numbers.q}
+
+g:
+{numbers.public_numbers.parameter_numbers.g}
+
+Private key x:
+{numbers.x}
+
+Public key y:
+{numbers.public_numbers.y}
+""",
+        )
+
+    def dsa_sign(self):
+
+        if self.dsa_key is None:
+            write(self.dsa_out, "Generate keys first")
+            return
+
+        msg = self.dsa_msg.get().encode()
+
+        self.dsa_sig = self.dsa.sign(self.dsa_key, msg)
+
+        write(
+            self.dsa_out,
+            f"""
+=== DSA SIGNATURE ===
+
+Message:
+{msg.decode()}
+
+SHA-256(message)
+
+Signature:
+{self.dsa_sig.hex()}
+""",
+        )
+
+    def dsa_verify(self):
+
+        if self.dsa_sig is None:
+            write(self.dsa_out, "Sign first")
+            return
+
+        valid = self.dsa.verify(
+            self.dsa_key.public_key(), self.dsa_sig, self.dsa_msg.get().encode()
+        )
+
+        write(
+            self.dsa_out,
+            f"""
+=== DSA VERIFICATION ===
+
+Verification result:
+{valid}
+""",
+        )
+
+    def dsa_tamper(self):
+
+        if self.dsa_sig is None:
+            write(self.dsa_out, "Sign first")
+            return
+
+        tampered = self.dsa_msg.get() + " hacked"
+
+        valid = self.dsa.verify(
+            self.dsa_key.public_key(), self.dsa_sig, tampered.encode()
+        )
+
+        write(
+            self.dsa_out,
+            f"""
+=== DSA TAMPERING ===
+
+Tampered message:
+{tampered}
+
+Verification:
+{valid}
+""",
+        )

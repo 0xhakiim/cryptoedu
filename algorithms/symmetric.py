@@ -2,6 +2,7 @@
 crypto/symmetric.py — AES-128/192/256 helpers (ECB · CBC · CTR).
 Requires: pycryptodome  (pip install pycryptodome)
 """
+
 import hashlib
 import os
 import time
@@ -10,6 +11,7 @@ try:
     from Crypto.Cipher import AES
     from Crypto.Util.Padding import pad, unpad
     from Crypto.Random import get_random_bytes
+
     AVAILABLE = True
 except ImportError:
     AVAILABLE = False
@@ -17,12 +19,14 @@ except ImportError:
 
 # ── Key derivation ─────────────────────────────────────────────────────────────
 
+
 def derive_key(passphrase: str, bits: int) -> bytes:
     """Derive an AES key from a passphrase via SHA-256 truncation."""
     return hashlib.sha256(passphrase.encode()).digest()[: bits // 8]
 
 
 # ── Encryption ─────────────────────────────────────────────────────────────────
+
 
 def aes_encrypt(plaintext: bytes, key: bytes, mode_str: str) -> dict:
     """
@@ -66,6 +70,7 @@ def aes_decrypt(ctx: dict, key: bytes) -> bytes:
 
 
 # ── Benchmark ──────────────────────────────────────────────────────────────────
+
 
 def benchmark_aes(mb: int = 1) -> list[tuple[str, float, float]]:
     """
